@@ -1,0 +1,317 @@
+package com.minikano.f50_sms.utils
+
+import androidx.compose.ui.text.toUpperCase
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
+import org.json.JSONArray
+import org.json.JSONObject
+import java.io.File
+import java.util.Locale
+import java.util.Locale.getDefault
+import kotlin.math.max
+
+/*
+* Thanks to 'ZhiNian' (group member) for the idea
+* */
+
+// Data classes
+data class CpuStat(val cpu: String, val total: Long, val idle: Long)
+data class ThermalZone(val type: String, val temp: Int)
+data class MemoryInfo(
+    val total: Long,
+    val available: Long,
+    val used: Long,
+    val usagePercent: Double,
+    val swapTotal: Long,
+    val swapFree: Long,
+    val swapUsed: Long,
+    val swapUsagePercent: Double
+)
+
+data class UsbDevice(
+    val path: String,
+    val product: String,
+    val speed: Int
+)
+
+fun buildJsonObject(block: JSONObject.() -> Unit): JSONObject {
+    return JSONObject().apply(block)
+}
+
+private fun buildThermalJson(zones: List<ThermalZone>): String {
+    if (zones.isEmpty()) return "[]"
+    val jsonParts = Array(zones.size) { i ->
+        val zone = zones[i]
+        """{"type":"${zone.type}","temp":${zone.temp}}"""
+    }
+    return "[${jsonParts.joinToString(",")}]"
+}
+
+// Get CPU frequency as JSON
+suspend fun getCpuFreqJson(): String = withContext(Dispatchers.IO) {
+    val json = JSONObject()
+    val cpuDir = File("/sys/devices/system/cpu")
+
+    cpuDir.listFiles { _, name -> name.matches(Regex("cpu[0-9]+")) }?.forEach { coreDir ->
+        val coreName = coreDir.name
+        val cur = File(coreDir, "cpufreq/scaling_cur_freq").takeIf { it.exists() }
+            ?.readText()?.trim()?.toIntOrNull()?.div(1000) ?: 0
+
+        val max = File(coreDir, "cpufreq/cpuinfo_max_freq").takeIf { it.exists() }
+            ?.readText()?.trim()?.toIntOrNull()?.div(1000) ?: 0
+
+        json.put(coreName, JSONObject().apply {
+            put("cur", cur)
+            put("max", max)
+        })
+    }
+    return@withContext json.toString()
+}
+
+suspend fun calculateCpuUsage(): String = withContext(Dispatchers.IO) {
+    // First read
+    val stats1 = readProcStat()
+    delay(100) // wait 100ms
+    // Second read
+    val stats2 = readProcStat()
+
+    val json = buildJsonObject {
+        stats1.forEach { (cpu, stat1) ->
+            val stat2 = stats2[cpu] ?: return@forEach
+
+            val totalDiff = stat2.total - stat1.total
+            val idleDiff = stat2.idle - stat1.idle
+
+            val usage = if (totalDiff == 0L) {
+                0.0
+            } else {
+                ((totalDiff - idleDiff) * 100.0) / totalDiff
+            }
+
+            put(cpu, "%.1f".format(usage))
+        }
+    }
+
+    return@withContext json.toString()
+}
+
+private fun readProcStat(): Map<String, CpuStat> {
+    val stats = mutableMapOf<String, CpuStat>()
+    File("/proc/stat").bufferedReader().useLines { lines ->
+        lines.filter { it.startsWith("cpu") }.forEach { line ->
+            val parts = line.trim().split("\\s+".toRegex())
+            if (parts.size > 4) {
+                val cpuName = parts[0]
+                // Total time (sum of all fields)
+                val total = parts.subList(1, parts.size).sumOf { it.toLongOrNull() ?: 0 }
+                // Idle time = idle + iowait (4th + 5th column)
+                val idle = parts[4].toLongOrNull() ?: (0 +
+                        (parts.getOrNull(5)?.toLongOrNull() ?: 0))
+                stats[cpuName] = CpuStat(cpuName, total, idle)
+            }
+        }
+    }
+    return stats
+}
+
+suspend fun getMemoryUsage(): String = withContext(Dispatchers.IO) {
+    val memInfo = readProcMeminfo()
+
+    // Memory usage
+    val used = memInfo.total - memInfo.available
+    val usagePercent = if (memInfo.total > 0) {
+        used.toDouble() * 100 / memInfo.total
+    } else 0.0
+
+    // Swap usage
+    val swapUsed = memInfo.swapTotal - memInfo.swapFree
+    val swapUsagePercent = if (memInfo.swapTotal > 0) {
+        swapUsed.toDouble() * 100 / memInfo.swapTotal
+    } else 0.0
+
+    // Build JSON
+    return@withContext buildJsonObject {
+        put("mem_total_kb", memInfo.total)
+        put("mem_available_kb", memInfo.available)
+        put("mem_used_kb", used)
+        put("mem_usage_percent", "%.1f".format(usagePercent))
+        put("swap_total_kb", memInfo.swapTotal)
+        put("swap_free_kb", memInfo.swapFree)
+        put("swap_used_kb", swapUsed)
+        put("swap_usage_percent", "%.1f".format(swapUsagePercent))
+    }.toString()
+}
+
+private fun readProcMeminfo(): MemoryInfo {
+    var total = 0L
+    var available = 0L
+    var swapTotal = 0L
+    var swapFree = 0L
+
+    File("/proc/meminfo").bufferedReader().useLines { lines ->
+        lines.forEach { line ->
+            when {
+                line.startsWith("MemTotal:") -> total = parseMemValue(line)
+                line.startsWith("MemAvailable:") -> available = parseMemValue(line)
+                line.startsWith("SwapTotal:") -> swapTotal = parseMemValue(line)
+                line.startsWith("SwapFree:") -> swapFree = parseMemValue(line)
+            }
+        }
+    }
+
+    return MemoryInfo(total, available, 0, 0.0, swapTotal, swapFree, 0, 0.0)
+}
+
+private fun parseMemValue(line: String): Long {
+    return line.split("\\s+".toRegex())
+        .getOrNull(1)
+        ?.toLongOrNull() ?: 0L
+}
+
+// CPU temperature
+suspend fun readThermalZones(): Pair<Int, String> = withContext(Dispatchers.IO) {
+    val thermalDir = File("/sys/class/thermal")
+    val zones = mutableListOf<ThermalZone>()
+
+    thermalDir.listFiles()?.filter { it.name.startsWith("thermal_zone") }?.forEach { zoneDir ->
+        val typeFile = File(zoneDir, "type")
+        val tempFile = File(zoneDir, "temp")
+
+        if (typeFile.exists() && tempFile.exists()) {
+            try {
+                val sensorType = typeFile.readText().trim()
+                val tempValue = tempFile.readText().trim().toIntOrNull() ?: -1
+                // Filter out meaningless values (e.g., >124°C)
+                if (tempValue <= 124 * 1000 && tempValue >= 0 && sensorType.isNotEmpty()) {
+                    zones.add(ThermalZone(sensorType, tempValue))
+                }
+            } catch (_: Exception) { }
+        }
+    }
+    val sortedZones = zones.sortedByDescending { it.temp }
+    val maxTemp = sortedZones.firstOrNull()?.temp ?: -1
+    val json = buildThermalJson(zones)
+
+    return@withContext Pair(maxTemp, json)
+}
+
+// Battery voltage/current
+data class BatteryInfo(
+    var current_uA: Int = -1,  // unit: μA
+    var voltage_uV: Int = -1  // unit: μV
+)
+suspend fun readBatteryStatus(): BatteryInfo = withContext(Dispatchers.IO) {
+    val baseDir = File("/sys/class/power_supply/battery")
+    val info = BatteryInfo()
+
+    val files = mapOf(
+        "current_now" to ::parseMicroAmp,
+        "voltage_now" to ::parseMicroVolt
+    )
+
+    val details = mutableMapOf<String, Any>()
+
+    files.forEach { (filename, parser) ->
+        val file = File(baseDir, filename)
+        if (file.exists()) {
+            try {
+                val raw = file.readText().trim()
+                val value = parser(raw)
+                details[filename] = value
+                when (filename) {
+                    "current_now" -> info.current_uA = value
+                    "voltage_now" -> info.voltage_uV = value
+                }
+            } catch (_: Exception) { }
+        }
+    }
+
+    return@withContext info
+}
+
+private fun parseMicroAmp(text: String): Int {
+    return text.toIntOrNull() ?: -1
+}
+
+private fun parseMicroVolt(text: String): Int {
+    return text.toIntOrNull() ?: -1
+}
+
+suspend fun readUsbDevices(): Pair<Int, String> = withContext(Dispatchers.IO) {
+    val usbDir = File("/sys/bus/usb/devices")
+    val devices = mutableListOf<UsbDevice>()
+    var maxSpeed = 0
+    var gadgetSpeed = "unknown"
+
+    usbDir.listFiles()?.forEach { deviceDir ->
+        val productFile = File(deviceDir, "product")
+        val speedFile = File(deviceDir, "speed")
+
+        if (productFile.exists() && speedFile.exists()) {
+            try {
+                val product = productFile.readText().trim()
+                val speed = speedFile.readText().trim().toIntOrNull() ?: 0
+                // Exclude devices that are not actual USB-C
+                if (
+                    !(deviceDir.name.startsWith("usb")) &&
+                    !(product.contains("Host Controller", ignoreCase = true)) &&
+                    !(product.contains("HDRC", ignoreCase = true))
+                    ) {
+                    if(speed > maxSpeed) maxSpeed = speed
+                    devices.add(UsbDevice(deviceDir.name, product, speed))
+                }
+            } catch (_: Exception) {}
+        }
+    }
+
+    // Also detect Type-C host/gadget mode
+    // cat /sys/class/android_usb/android0/state
+    var typeCMode = "unknown"
+    val portStateFile = File("/sys/class/android_usb/android0/state")
+    if (portStateFile.exists()) {
+        val state = portStateFile.readText().trim().uppercase(Locale.getDefault())
+        typeCMode = if (state == "DISCONNECTED") "host" else "gadget"
+    }
+
+    // If gadget mode, try reading speed from another source
+    if(typeCMode == "gadget"){
+        val udcDir = File("/sys/class/udc")
+        if (udcDir.exists()){
+            var speed = "Unknown"
+            udcDir.listFiles()?.forEach { udc ->
+                val speedFile = File(udc, "current_speed")
+                if (speedFile.exists()) {
+                    val raw = speedFile.readText().trim()
+                    if(raw != "UNKNOWN") {
+                        speed = when (raw) {
+                            "low-speed" -> "USB 1.0 (1.5Mbps)"
+                            "full-speed" -> "USB 1.1 (12Mbps)"
+                            "high-speed" -> "USB 2.0 (480Mbps)"
+                            "super-speed" -> "USB 3.0 (5Gbps)"
+                            "super-speed-plus" -> "USB 3.1 (10Gbps)"
+                            else -> raw
+                        }
+                    }
+                }
+            }
+            gadgetSpeed = speed
+        }
+    }
+
+    // Build JSON
+    val jsonArray = JSONArray()
+    devices.forEach { dev ->
+        val obj = JSONObject()
+        obj.put("path", dev.path)
+        obj.put("product", dev.product)
+        obj.put("speed", dev.speed)
+        jsonArray.put(obj)
+    }
+    val jsonRoot = JSONObject()
+    jsonRoot.put("typec_mode", typeCMode)
+    jsonRoot.put("gadget_speed", gadgetSpeed)
+    jsonRoot.put("devices", jsonArray)
+
+    return@withContext Pair(maxSpeed, jsonRoot.toString())
+}
