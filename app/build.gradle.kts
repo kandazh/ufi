@@ -64,6 +64,10 @@ android {
     buildTypes {
         release {
             isMinifyEnabled = true
+            // Ensure the produced release APK is signed (otherwise installation fails with
+            // INSTALL_PARSE_FAILED_NO_CERTIFICATES). Replace with a real release keystore
+            // for production distribution if needed.
+            signingConfig = signingConfigs.getByName("debug")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
