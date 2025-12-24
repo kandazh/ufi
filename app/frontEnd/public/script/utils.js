@@ -610,7 +610,7 @@ Array.from(document.querySelectorAll('.mask'))?.forEach(el => {
         const classList = Array.from(e?.target?.classList || [])
         const id = e.target.id
         // Maintain a blacklist: modals in this list are not affected
-        const blackList = ['updateSoftwareModal', "plugin_store", "APNViewModal", "APNEditModal"]
+        const blackList = ["plugin_store", "APNViewModal", "APNEditModal"]
         const isCloseable = !blackList.includes(id)
         if (classList && classList.includes('mask') && isCloseable) {
             if (id) {

@@ -456,7 +456,6 @@ function main_func() {
         initChangeTokenData()
         adbQuery()
         loadTitle()
-        initUpdateSoftware()
         handlerADBStatus()
         handlerADBNetworkStatus()
         handlerPerformaceStatus()
@@ -2826,6 +2825,29 @@ function main_func() {
         if (!TTYD) return
         const list = TTYD.querySelector('.deviceList')
         if (!list) return
+
+        const attachTTYDMaximizeHandlers = () => {
+            const iframe = document.querySelector('#ttyd_iframe')
+            if (!iframe) return
+
+            iframe.ondblclick = (e) => {
+                e.preventDefault()
+                e.stopPropagation()
+                document.documentElement.classList.toggle('ttyd-maximized')
+                iframe.classList.toggle('ttyd-frame-max')
+            }
+        }
+
+        if (!window.__KANO_TTYD_ESC_HANDLER__) {
+            window.__KANO_TTYD_ESC_HANDLER__ = true
+            document.addEventListener('keydown', (e) => {
+                if (e.key !== 'Escape') return
+                const iframe = document.querySelector('#ttyd_iframe')
+                document.documentElement.classList.remove('ttyd-maximized')
+                iframe && iframe.classList.remove('ttyd-frame-max')
+            })
+        }
+
         // Fetch TTYD address and show if present
         try {
             const port = localStorage.getItem('ttyd_port')
@@ -2848,8 +2870,9 @@ function main_func() {
                 title && (title.innerHTML = "TTYD")
                 list.innerHTML = `
         <li style = "padding:10px">
-                    <iframe src="http://${res.ip}" style="border:none;padding:0;margin:0;width:100%;height:400px;border-radius: 10px;overflow: hidden;opacity: .6;"></iframe>
+                    <iframe id="ttyd_iframe" class="ttyd-frame" src="http://${res.ip}"></iframe>
         </li > `
+                attachTTYDMaximizeHandlers()
             }, 600);
         } catch {
             // console.log();
@@ -3703,269 +3726,7 @@ function main_func() {
         }
     })
 
-    // Software update
-    const queryUpdate = async () => {
-        if (!(await initRequestData())) {
-            return null
-        }
-        try {
-            const res = await fetch(`${KANO_baseURL}/check_update`, {
-                method: 'get',
-                headers: common_headers
-            })
-            const { alist_res, base_uri, changelog } = await res.json()
-            const contents = alist_res?.data?.content
-            if (!contents || contents.length <= 0) return null
-            // Find latest APK
-            const content = (contents.filter(item => item.name.includes('.apk')).sort((a, b) => {
-                return new Date(b.modified) - new Date(a.modified)
-            }))[0]
-            if (content) {
-                return {
-                    name: content.name,
-                    base_uri,
-                    changelog
-                }
-            }
-        } catch {
-            return null
-        }
-    }
-
-    // Install update
-    const requestInstallUpdate = async () => {
-        // const changelogTextContent = document.querySelector('#ChangelogTextContent')
-        // changelogTextContent.innerHTML = ''
-        const OTATextContent = document.querySelector('#OTATextContent')
-        try {
-            OTATextContent.innerHTML = `<div>📦 ${t('install_ing')}</div>`
-            const _res = await fetch(`${KANO_baseURL}/install_apk`, {
-                method: 'POST',
-                headers: {
-                    ...common_headers,
-                }
-            })
-            const res = await _res.json()
-            if (res && res.error) throw new Error(t('install_failed') + ': ' + res.error)
-            const res_text = res.result == 'success' ? '✅ ' + t('install_success_refresh') : '❌ ' + t('install_fail_reboot')
-            OTATextContent.innerHTML = `<div>${res_text}</div><div>${res.result != 'success' ? res.result : ''}</div>`
-        } catch (e) {
-            createToast(t('install_done'), 'green')
-            let res_text = '✅ ' + t('install_success_refresh')
-            console.log(e.message);
-            if (e.message.includes(t('install_failed'))) {
-                res_text = `❌ ${t('install_failed')}, ${t('reason')}${e.message.replace(t('install_failed'), '')}, ${t('error_please_reboot_devices')}`
-            }
-            OTATextContent.innerHTML = `<div>${res_text}</div></div>`
-        } finally {
-            initUpdateSoftware()
-        }
-    }
-
-    // Update now
-    let updateSoftwareInterval = null
-    const handleUpdateSoftware = async (url) => {
-        updateSoftwareInterval && updateSoftwareInterval()
-        if (!url || url.trim() == "") return
-        const doUpdateEl = document.querySelector('#doUpdate')
-        const closeUpdateBtnEl = document.querySelector('#closeUpdateBtn')
-        const updateSoftwareModal = document.querySelector('#updateSoftwareModal')
-
-        doUpdateEl.innerHTML = t('one_click_update')
-
-        // Whether advanced tools are enabled
-        const isEnabledAdvanceFunc = await checkAdvanceFunc()
-
-        if (!isEnabledAdvanceFunc) {
-            let adb_status = await adbKeepAlive()
-            if (!adb_status) {
-                return createToast(t('adb_not_init'), 'red')
-            }
-        } else {
-            createToast(t('advanced_install'))
-            doUpdateEl.innerHTML = t('fast_installing')
-        }
-
-        // Disable buttons during update
-        doUpdateEl && (doUpdateEl.onclick = null)
-        doUpdateEl && (doUpdateEl.style.backgroundColor = 'var(--dark-btn-disabled-color)')
-        closeUpdateBtnEl && (closeUpdateBtnEl.onclick = null)
-        closeUpdateBtnEl && (closeUpdateBtnEl.style.backgroundColor = 'var(--dark-btn-disabled-color)')
-        updateSoftwareModal && (updateSoftwareModal.onclick = null)
-        try {
-            // const changelogTextContent = document.querySelector('#ChangelogTextContent')
-            // changelogTextContent.innerHTML = ''
-            // Start download request
-            await fetch(`${KANO_baseURL}/download_apk`, {
-                method: 'POST',
-                headers: {
-                    ...common_headers,
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify(
-                    {
-                        apk_url: url
-                    }
-                )
-            })
-        } catch {
-            createToast(t('download_request_failed'), 'red')
-            initUpdateSoftware()
-            return
-        }
-
-        // Start timer to query update progress
-        const OTATextContent = document.querySelector('#OTATextContent')
-        updateSoftwareInterval = requestInterval(async () => {
-            try {
-                const _res = await fetch(`${KANO_baseURL}/download_apk_status`, {
-                    method: 'get',
-                    headers: common_headers
-                })
-                const res = await _res.json()
-                if (res && res.error == 'error') throw t('download_failed')
-                const status = res.status == "idle" ? `🕒 ${t("download_waiting")}` : res.status == "downloading" ? `🟢 ${t('download_ing')}` : res.status == "done" ? `✅ ${t('download_success')}` : `❌ ${t('download_failed')}`
-                OTATextContent.innerHTML = `<div>🔄 ${t('donwload_ing_ota')}...<br/>${t('download_status')}: ${status}<br/>📁 ${t('download_progress')}: ${res?.percent}%<br/></div>`
-                if (res.percent == 100) {
-                    updateSoftwareInterval && updateSoftwareInterval()
-                    createToast(t('toast_download_success_install'), 'green')
-                    // Run install
-                    requestInstallUpdate()
-                }
-            } catch (e) {
-                OTATextContent.innerHTML = t('toast_download_failed_network')
-                updateSoftwareInterval && updateSoftwareInterval()
-                initUpdateSoftware()
-            }
-        }, 500)
-    }
-
-    // Download update package only
-    const handleDownloadSoftwareLink = async (fileLink) => {
-        createToast(t('toast_download_start'), 'green')
-        const linkEl = document.createElement('a')
-        linkEl.href = fileLink
-        linkEl.target = '_blank'
-        linkEl.style.display = 'none'
-        document.body.appendChild(linkEl)
-        setTimeout(() => {
-            linkEl.click()
-            setTimeout(() => {
-                linkEl.remove()
-            }, 100);
-        }, 50);
-    }
-
-    // Check for updates
-    const checkUpdateAction = async (silent = false) => {
-        const changelogTextContent = document.querySelector('#ChangelogTextContent')
-        const OTATextContent = document.querySelector('#OTATextContent')
-        OTATextContent.innerHTML = t('checking_update')
-        changelogTextContent.innerHTML = ''
-        !silent && showModal('#updateSoftwareModal')
-
-        try {
-            const content = await queryUpdate()
-            if (content) {
-                const { app_ver, app_ver_code } = await (await fetch(`${KANO_baseURL}/version_info`, { headers: common_headers })).json();
-                const { name, base_uri, changelog } = content;
-
-                const version = name.match(/V(\d+\.\d+\.\d+)/i)?.[1];
-                const appVer = app_ver.match(/(\d+\.\d+\.\d+)/i)?.[1];
-                const { date_str, formatted_date } = getApkDate(name);
-                let isLatest = false;
-
-                if (version && appVer) {
-                    const versionNew = version.trim();
-                    const versionCurrent = appVer.trim();
-
-                    // If the new version is greater than the current version
-                    if (versionNew > versionCurrent) {
-                        isLatest = false;
-                    }
-                    // If versions match, compare build date
-                    else if ((versionNew === versionCurrent) && formatted_date) {
-                        const newDate = Number(formatted_date);
-                        const currentDate = Number(app_ver_code);
-
-                        if (newDate > currentDate) {
-                            isLatest = false;
-                        } else {
-                            isLatest = true;
-                        }
-                    }
-                }
-
-                // If it includes a "force" flag, treat as not latest
-                if (name.includes('force')) {
-                    isLatest = false;
-                }
-
-                if (!silent) {
-                    const doUpdateEl = document.querySelector('#doUpdate')
-                    const doDownloadAPKEl = document.querySelector('#downloadAPK')
-                    if (doUpdateEl && doDownloadAPKEl) {
-                        if (!isLatest) {
-                            doUpdateEl.style.backgroundColor = 'var(--dark-btn-color)'
-                            doDownloadAPKEl.style.backgroundColor = 'var(--dark-btn-color)'
-                            doUpdateEl.onclick = () => handleUpdateSoftware(base_uri + name)
-                            doDownloadAPKEl.onclick = () => handleDownloadSoftwareLink(base_uri + name)
-                        } else {
-                            doUpdateEl.onclick = null
-                            doDownloadAPKEl.onclick = null
-                            doUpdateEl.style.backgroundColor = 'var(--dark-btn-disabled-color)'
-                            doDownloadAPKEl.style.backgroundColor = 'var(--dark-btn-disabled-color)'
-                        }
-                    }
-                    // Get changelog
-                    // if (!isLatest) {
-                    changelogTextContent.innerHTML = changelog
-                    // }
-                    OTATextContent.innerHTML = `${isLatest ? `<div>${t('is_latest_version')}: V${app_ver} ${app_ver_code}</div>` : `<div>${t('found_update')}: ${name}<br/>${date_str ? `${t('release_date')}: ${date_str}` : ''}</div>`}`
-
-                }
-                return !isLatest ? {
-                    isForceUpdate: name.includes('force'),
-                    text: version + ' ' + date_str
-                } : null
-
-            } else {
-                throw new Error(t('error'))
-            }
-        } catch (e) {
-            !silent && (OTATextContent.innerHTML = `${t('connect_update_server_failed')}<br>${e.message ? e.message : ''}`)
-            return null
-        }
-    }
-
-    const initUpdateSoftware = async () => {
-        const changelogTextContent = document.querySelector('#ChangelogTextContent')
-        changelogTextContent.innerHTML = ''
-        const btn = document.querySelector('#OTA')
-        if (!btn) return
-        const closeUpdateBtnEl = document.querySelector('#closeUpdateBtn')
-        closeUpdateBtnEl && (closeUpdateBtnEl.onclick = () => closeModal('#updateSoftwareModal'))
-        closeUpdateBtnEl && (closeUpdateBtnEl.style.backgroundColor = 'var(--dark-btn-color)')
-
-        if (!(await initRequestData())) {
-            btn.onclick = () => createToast(t('toast_please_login'), 'red')
-            btn.style.backgroundColor = 'var(--dark-btn-disabled-color)'
-            return null
-        }
-        btn.style.backgroundColor = 'var(--dark-btn-color)'
-        btn.onclick = async () => {
-            const btn = document.querySelector('#OTA')
-            if (!(await initRequestData())) {
-                btn.onclick = () => createToast(t('toast_please_login'), 'red')
-                btn.style.backgroundColor = 'var(--dark-btn-disabled-color)'
-                return null
-            }
-            checkUpdateAction()
-        }
-    }
-    initUpdateSoftware()
-
-
+    // Software update feature removed.
     // ADB polling
     const adbQuery = async () => {
         try {
@@ -4019,14 +3780,7 @@ function main_func() {
 
     }
 
-    // Check for updates after screen-on
-    setTimeout(() => {
-        checkUpdateAction(true).then((res) => {
-            if (res) {
-                createToast(`${t('found')} ${res.isForceUpdate ? t('sticky_update') : t('mew_update')}: ${res.text}`)
-            }
-        })
-    }, 100);
+    // Auto update notification disabled (manual update check still available via the OTA button).
 
 
     // Initialize SMS forwarding form
@@ -5808,68 +5562,16 @@ echo ${flag ? '1' : '0'} > /sys/devices/system/cpu/cpu3/online
     getSELinuxStatus()
 
     const initTerms = async () => {
-        if (!(await initRequestData())) {
-            return null
-        }
-        // User agreement
-        const md = createModal({
-            name: "kano_terms",
-            noBlur: true,
-            isMask: true,
-            title: t('useTermsTitle'),
-            contentStyle: "font-size:12px",
-            confirmBtnText: t('accept'),
-            closeBtnText: t('decline'),
-            onClose: () => {
-                createToast(t('please_accept_terms'))
-                return false
-            },
-            onConfirm: () => {
-                const scroll = md.el.querySelector('.content')
-                if ((scroll.scrollTop < scroll.clientHeight) || (scroll.scrollTop < 50)) {
-                    // You didn't read it carefully again 😯
-                    createToast(t('please_read_terms'))
-                    return false
-                }
-                fetchWithTimeout(`${KANO_baseURL}/accept_terms`, {
-                    method: "post",
-                    headers: common_headers,
-                }).then(r => r.json()).then(res => {
-                    if (res.result == "success") {
-                        createToast(t('accept'))
-                    }
-                }).finally((res) => {
-                    // Check for weak token after acceptance
-                    initCheckWeakToken()
-                })
-                return true
-            },
-            content: t('useTerms')
-        })
-        const cache = localStorage.getItem('read_terms')
+        // Disabled: do not block app usage behind a terms modal.
         try {
-            if (await getTermsAcceptance()) {
-                if (cache != "1") {
-                    localStorage.setItem('read_terms', '1')
-                }
-                return
-            }
-            showModal(md.id)
-        } catch {
-            if (cache != "1") {
-                showModal(md.id)
-            }
-        }
+            localStorage.setItem('read_terms', '1')
+        } catch { }
+        return
     }
     initTerms()
 
     const initCheckWeakToken = async () => {
         if (!(await initRequestData())) {
-            return null
-        }
-
-        // Do not show unless the user accepted the terms
-        if (!(await getTermsAcceptance())) {
             return null
         }
 

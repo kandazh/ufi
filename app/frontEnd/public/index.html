@@ -109,8 +109,6 @@
                             onclick="createToast(t('please_login'),'red')">APN Settings</button>
                         <button id="USBStatusManagement" data-i18n="usb_status" class="btn"
                             onclick="createToast(t('please_login'),'red')">USB Status</button>
-                        <button id="OTA" class="btn" data-i18n="ota"
-                            onclick="createToast(t('please_login'),'red')">Software Update</button>
 
                         <select class="select" style="display: none;" id="SLEEP_TIME" onchange="changeSleepTime(event)">
                             <option value="-1" data-i18n="sleep_never">Never Sleep</option>
@@ -1620,31 +1618,6 @@
 
                 <div class="btn" style="text-align: right;">
                     <button type="button" onclick="closeUSBStatusModal('#USBStatusModal')" data-i18n="close_btn">Close</button>
-                </div>
-            </div>
-            <!-- Software Update Modal -->
-            <div class="mask" id="updateSoftwareModal" style="display: none;">
-                <div class="modal" style="width: 90%; max-width: 800px;">
-                    <div class="title" data-i18n="update_title">UFI-TOOLS Software Update</div>
-                    <div style="font-size: 12px;margin-top: 10px;" class="adb_status title"></div>
-                    <div class="title" style="font-size: 10px;margin-top: 10px;">
-                        <div>
-                            <i
-                                data-i18n="update_notice_1">Software update requires enabling USB Debugging + Network ADB (reboot, or toggle USB Debugging off/on). If one-click update doesn't work, download the installer and install manually.</i><br>
-                            <i data-i18n="update_notice_2">Due to Android package management, do not power off during the update. Ensure it can enter the background normally after updating, then reboot.</i>
-                        </div>
-                    </div>
-                    <div class="speedtest" style="border-left: 6px solid pink;font-size: 12px;margin-top: 10px;"
-                        id="OTATextContent" data-i18n="update_checking">Checking for updates...</div>
-                    <div class="content" style="margin: 15px 0; overflow-y: scroll; max-height: 250px;">
-                        <div class="speedtest" style="font-size: 12px;" id="ChangelogTextContent"></div>
-                    </div>
-                    <div class="btn" style="text-align: right;">
-                        <button id="doUpdate" data-i18n="btn_update">One-click Update</button>
-                        <button id="downloadAPK" data-i18n="btn_download">Download APK</button>
-                        <button id="closeUpdateBtn" type="button" onclick="closeModal('#updateSoftwareModal')"
-                            data-i18n="close_btn">Close</button>
-                    </div>
                 </div>
             </div>
             <!-- SMS Forward Modal -->

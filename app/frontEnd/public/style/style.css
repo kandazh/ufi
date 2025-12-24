@@ -662,6 +662,32 @@ input {
     -webkit-user-select: none;
 }
 
+/* Embedded TTYD terminal */
+#TTYD iframe.ttyd-frame {
+    border: none;
+    padding: 0;
+    margin: 0;
+    width: 100%;
+    min-height: 420px;
+    height: 70vh;
+    border-radius: 10px;
+    overflow: hidden;
+    opacity: 1;
+}
+
+html.ttyd-maximized {
+    overflow: hidden;
+}
+
+html.ttyd-maximized #TTYD iframe.ttyd-frame.ttyd-frame-max {
+    position: fixed;
+    inset: 0;
+    width: 100vw;
+    height: 100vh;
+    border-radius: 0;
+    z-index: 9999;
+}
+
 .collapse {
     overflow: hidden;
     height: 0;

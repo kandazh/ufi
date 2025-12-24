@@ -4,7 +4,7 @@ function gsmEncode(text) { function encodeText(text) { let encoded = []; for (le
 let KANO_baseURL = '/api'
 let KANO_PASSWORD = null
 let KANO_TOKEN = null;
-let ACCEPT_TERMS = false
+let ACCEPT_TERMS = true
 
 let loginMethod = localStorage.getItem('login_method') == "1" ? "1" : "0"; // 1: new method, 0: old method
 
@@ -576,16 +576,9 @@ const switchAPNAuto = async ({ isAuto = true, index = 0 }) => {
 
 // check Terms acceptance
 const getTermsAcceptance = async () => {
-    try {
-        const res = await (await fetchWithTimeout(`${KANO_baseURL}/version_info`)).json()
-        ACCEPT_TERMS = res.accept_terms && res.accept_terms.toString() == 'true'
-        if (ACCEPT_TERMS) {
-            return true
-        }
-    } catch {
-        ACCEPT_TERMS = false
-        return false
-    }
+    // Terms gating disabled
+    ACCEPT_TERMS = true
+    return true
 }
 
 // check sim pin
