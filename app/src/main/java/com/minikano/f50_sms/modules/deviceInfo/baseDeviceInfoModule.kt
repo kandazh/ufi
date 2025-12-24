@@ -4,6 +4,7 @@ import android.content.Context
 import android.os.StatFs
 import com.minikano.f50_sms.configs.AppMeta
 import com.minikano.f50_sms.modules.BASE_TAG
+import com.minikano.f50_sms.modules.PREFS_NAME
 import com.minikano.f50_sms.utils.KanoLog
 import com.minikano.f50_sms.utils.KanoUtils
 import com.minikano.f50_sms.utils.UniqueDeviceIDManager
